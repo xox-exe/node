@@ -180,8 +180,7 @@ const sec1EncExp = (cipher) => getRegExpForPEM('EC PRIVATE KEY', cipher);
     const expectedError = common.hasOpenSSL3 ? {
       name: 'Error',
       code: 'ERR_OSSL_OSSL_STORE_UI_PROCESS_INTERRUPTED_OR_CANCELLED',
-      message: 'error:1600006D:STORE routines::ui process interrupted or ' +
-        'cancelled'
+      message: 'Failed to read private key'
     } : {
       name: 'TypeError',
       code: 'ERR_MISSING_PASSPHRASE',
@@ -307,7 +306,7 @@ const sec1EncExp = (cipher) => getRegExpForPEM('EC PRIVATE KEY', cipher);
 
   // Test async DSA key generation.
   generateKeyPair('dsa', {
-    modulusLength: 512,
+    modulusLength: 2048,
     divisorLength: 256,
     publicKeyEncoding: {
       type: 'spki',
@@ -324,8 +323,8 @@ const sec1EncExp = (cipher) => getRegExpForPEM('EC PRIVATE KEY', cipher);
     // The private key is DER-encoded.
     assert(Buffer.isBuffer(privateKeyDER));
 
-    assertApproximateSize(publicKey, 440);
-    assertApproximateSize(privateKeyDER, 336);
+    assertApproximateSize(publicKey, 1194);
+    assertApproximateSize(privateKeyDER, 721);
 
     // Since the private key is encrypted, signing shouldn't work anymore.
     assert.throws(() => {
@@ -347,7 +346,6 @@ const sec1EncExp = (cipher) => getRegExpForPEM('EC PRIVATE KEY', cipher);
     });
   }));
 }
-
 {
   // Test async elliptic curve key generation, e.g. for ECDSA, with a SEC1
   // private key.
