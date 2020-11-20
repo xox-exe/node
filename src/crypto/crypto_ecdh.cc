@@ -425,17 +425,20 @@ Maybe<bool> ECDHBitsTraits::AdditionalConfig(
     return Nothing<bool>();
   }
 
+  ManagedEVPPKey m_pkey = private_key->Data()->GetAsymmetricKey();
+  Mutex::ScopedLock private_key_lock(*m_pkey.mutex());
+
   params->private_key = ECKeyPointer(
-      EC_KEY_dup(
-          EVP_PKEY_get1_EC_KEY(private_key->Data()->GetAsymmetricKey().get())));
+      EC_KEY_dup(EVP_PKEY_get1_EC_KEY(m_pkey.get())));
   if (!params->private_key) {
     THROW_ERR_CRYPTO_INVALID_KEYTYPE(env);
     return Nothing<bool>();
   }
 
+  ManagedEVPPKey m_ppkey = public_key->Data()->GetAsymmetricKey();
+  Mutex::ScopedLock public_key_lock(*m_ppkey.mutex());
   params->public_key = ECKeyPointer(
-      EC_KEY_dup(
-          EVP_PKEY_get1_EC_KEY(public_key->Data()->GetAsymmetricKey().get())));
+      EC_KEY_dup(EVP_PKEY_get1_EC_KEY(m_ppkey.get())));
   if (!params->public_key) {
     THROW_ERR_CRYPTO_INVALID_KEYTYPE(env);
     return Nothing<bool>();
@@ -535,9 +538,11 @@ WebCryptoKeyExportStatus EC_Raw_Export(
     KeyObjectData* key_data,
     const ECKeyExportConfig& params,
     ByteSource* out) {
-  CHECK(key_data->GetAsymmetricKey());
+  ManagedEVPPKey m_pkey = key_data->GetAsymmetricKey();
+  CHECK(m_pkey);
+  Mutex::ScopedLock lock(*m_pkey.mutex());
 
-  EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(key_data->GetAsymmetricKey().get());
+  EC_KEY* ec_key = EVP_PKEY_get0_EC_KEY(m_pkey.get());
   CHECK_NOT_NULL(ec_key);
 
   const EC_GROUP* group = EC_KEY_get0_group(ec_key);
@@ -598,10 +603,11 @@ Maybe<bool> ExportJWKEcKey(
     Environment* env,
     std::shared_ptr<KeyObjectData> key,
     Local<Object> target) {
-  ManagedEVPPKey pkey = key->GetAsymmetricKey();
-  CHECK_EQ(EVP_PKEY_id(pkey.get()), EVP_PKEY_EC);
+  ManagedEVPPKey m_pkey = key->GetAsymmetricKey();
+  Mutex::ScopedLock lock(*m_pkey.mutex());
+  CHECK_EQ(EVP_PKEY_id(m_pkey.get()), EVP_PKEY_EC);
 
-  EC_KEY* ec = EVP_PKEY_get0_EC_KEY(pkey.get());
+  EC_KEY* ec = EVP_PKEY_get0_EC_KEY(m_pkey.get());
   CHECK_NOT_NULL(ec);
 
   const EC_POINT* pub = EC_KEY_get0_public_key(ec);
@@ -719,10 +725,11 @@ Maybe<bool> GetEcKeyDetail(
     Environment* env,
     std::shared_ptr<KeyObjectData> key,
     Local<Object> target) {
-  ManagedEVPPKey pkey = key->GetAsymmetricKey();
-  CHECK_EQ(EVP_PKEY_id(pkey.get()), EVP_PKEY_EC);
+  ManagedEVPPKey m_pkey = key->GetAsymmetricKey();
+  Mutex::ScopedLock lock(*m_pkey.mutex());
+  CHECK_EQ(EVP_PKEY_id(m_pkey.get()), EVP_PKEY_EC);
 
-  EC_KEY* ec = EVP_PKEY_get0_EC_KEY(pkey.get());
+  EC_KEY* ec = EVP_PKEY_get0_EC_KEY(m_pkey.get());
   CHECK_NOT_NULL(ec);
 
   const EC_GROUP* group = EC_KEY_get0_group(ec);

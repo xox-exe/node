@@ -131,10 +131,11 @@ Maybe<bool> ExportJWKDsaKey(
     Environment* env,
     std::shared_ptr<KeyObjectData> key,
     Local<Object> target) {
-  ManagedEVPPKey pkey = key->GetAsymmetricKey();
-  CHECK_EQ(EVP_PKEY_id(pkey.get()), EVP_PKEY_DSA);
+  ManagedEVPPKey m_pkey = key->GetAsymmetricKey();
+  Mutex::ScopedLock lock(*m_pkey.mutex());
+  CHECK_EQ(EVP_PKEY_id(m_pkey.get()), EVP_PKEY_DSA);
 
-  DSA* dsa = EVP_PKEY_get0_DSA(pkey.get());
+  DSA* dsa = EVP_PKEY_get0_DSA(m_pkey.get());
   CHECK_NOT_NULL(dsa);
 
   const BIGNUM* y;
@@ -235,11 +236,12 @@ Maybe<bool> GetDsaKeyDetail(
   const BIGNUM* p;  // Modulus length
   const BIGNUM* q;  // Divisor length
 
-  ManagedEVPPKey pkey = key->GetAsymmetricKey();
-  int type = EVP_PKEY_id(pkey.get());
+  ManagedEVPPKey m_pkey = key->GetAsymmetricKey();
+  Mutex::ScopedLock lock(*m_pkey.mutex());
+  int type = EVP_PKEY_id(m_pkey.get());
   CHECK(type == EVP_PKEY_DSA);
 
-  DSA* dsa = EVP_PKEY_get0_DSA(pkey.get());
+  DSA* dsa = EVP_PKEY_get0_DSA(m_pkey.get());
   CHECK_NOT_NULL(dsa);
 
   DSA_get0_pqg(dsa, &p, &q, nullptr);
