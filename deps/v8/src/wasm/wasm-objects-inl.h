@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#if !V8_ENABLE_WEBASSEMBLY
+#error This header should only be included if WebAssembly is enabled.
+#endif  // !V8_ENABLE_WEBASSEMBLY
+
 #ifndef V8_WASM_WASM_OBJECTS_INL_H_
 #define V8_WASM_WASM_OBJECTS_INL_H_
 
@@ -167,7 +171,7 @@ double WasmGlobalObject::GetF64() {
 
 Handle<Object> WasmGlobalObject::GetRef() {
   // We use this getter for externref and funcref.
-  DCHECK(type().is_reference_type());
+  DCHECK(type().is_reference());
   return handle(tagged_buffer().get(offset()), GetIsolate());
 }
 
@@ -393,8 +397,7 @@ ACCESSORS(WasmIndirectFunctionTable, refs, FixedArray, kRefsOffset)
 #undef PRIMITIVE_ACCESSORS
 
 wasm::ValueType WasmTableObject::type() {
-  // TODO(7748): Support other table types? Wait for spec to clear up.
-  return wasm::ValueType::Ref(raw_type(), wasm::kNullable);
+  return wasm::ValueType::FromRawBitField(raw_type());
 }
 
 bool WasmMemoryObject::has_maximum_pages() { return maximum_pages() >= 0; }

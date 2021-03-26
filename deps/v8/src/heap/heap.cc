@@ -1524,6 +1524,14 @@ Heap::DevToolsTraceEventScope::~DevToolsTraceEventScope() {
 bool Heap::CollectGarbage(AllocationSpace space,
                           GarbageCollectionReason gc_reason,
                           const v8::GCCallbackFlags gc_callback_flags) {
+  if (V8_UNLIKELY(!deserialization_complete_)) {
+    // During isolate initialization heap always grows. GC is only requested
+    // if a new page allocation fails. In such a case we should crash with
+    // an out-of-memory instead of performing GC because the prologue/epilogue
+    // callbacks may see objects that are not yet deserialized.
+    CHECK(always_allocate());
+    FatalProcessOutOfMemory("GC during deserialization");
+  }
   const char* collector_reason = nullptr;
   GarbageCollector collector = SelectGarbageCollector(space, &collector_reason);
   is_current_gc_forced_ = gc_callback_flags & v8::kGCCallbackFlagForced ||
@@ -3575,28 +3583,30 @@ void Heap::VerifyObjectLayoutChange(HeapObject object, Map new_map) {
   // use object->set_map_after_allocation() to initialize its map.
   if (pending_layout_change_object_.is_null()) {
     if (object.IsJSObject()) {
-      DCHECK(!object.map().TransitionRequiresSynchronizationWithGC(new_map));
-    } else if (object.IsString() &&
-               (new_map == ReadOnlyRoots(this).thin_string_map() ||
-                new_map == ReadOnlyRoots(this).thin_one_byte_string_map())) {
+      // Without double unboxing all in-object fields of a JSObject are tagged.
+      return;
+    }
+    if (object.IsString() &&
+        (new_map == ReadOnlyRoots(this).thin_string_map() ||
+         new_map == ReadOnlyRoots(this).thin_one_byte_string_map())) {
       // When transitioning a string to ThinString,
       // Heap::NotifyObjectLayoutChange doesn't need to be invoked because only
       // tagged fields are introduced.
-    } else {
-      // Check that the set of slots before and after the transition match.
-      SlotCollectingVisitor old_visitor;
-      object.IterateFast(&old_visitor);
-      MapWord old_map_word = object.map_word();
-      // Temporarily set the new map to iterate new slots.
-      object.set_map_word(MapWord::FromMap(new_map));
-      SlotCollectingVisitor new_visitor;
-      object.IterateFast(&new_visitor);
-      // Restore the old map.
-      object.set_map_word(old_map_word);
-      DCHECK_EQ(new_visitor.number_of_slots(), old_visitor.number_of_slots());
-      for (int i = 0; i < new_visitor.number_of_slots(); i++) {
-        DCHECK(new_visitor.slot(i) == old_visitor.slot(i));
-      }
+      return;
+    }
+    // Check that the set of slots before and after the transition match.
+    SlotCollectingVisitor old_visitor;
+    object.IterateFast(&old_visitor);
+    MapWord old_map_word = object.map_word();
+    // Temporarily set the new map to iterate new slots.
+    object.set_map_word(MapWord::FromMap(new_map));
+    SlotCollectingVisitor new_visitor;
+    object.IterateFast(&new_visitor);
+    // Restore the old map.
+    object.set_map_word(old_map_word);
+    DCHECK_EQ(new_visitor.number_of_slots(), old_visitor.number_of_slots());
+    for (int i = 0; i < new_visitor.number_of_slots(); i++) {
+      DCHECK_EQ(new_visitor.slot(i), old_visitor.slot(i));
     }
   } else {
     DCHECK_EQ(pending_layout_change_object_, object);
@@ -5186,6 +5196,49 @@ void Heap::ReplaceReadOnlySpace(SharedReadOnlySpace* space) {
   read_only_space_ = space;
 }
 
+uint8_t* Heap::RemapEmbeddedBuiltinsIntoCodeRange(
+    const uint8_t* embedded_blob_code, size_t embedded_blob_code_size) {
+  const base::AddressRegion& code_range = memory_allocator()->code_range();
+
+  CHECK_NE(code_range.begin(), kNullAddress);
+  CHECK(!code_range.is_empty());
+
+  v8::PageAllocator* code_page_allocator =
+      memory_allocator()->code_page_allocator();
+
+  const size_t kAllocatePageSize = code_page_allocator->AllocatePageSize();
+  size_t allocate_code_size =
+      RoundUp(embedded_blob_code_size, kAllocatePageSize);
+
+  // Allocate the re-embedded code blob in the end.
+  void* hint = reinterpret_cast<void*>(code_range.end() - allocate_code_size);
+
+  void* embedded_blob_copy = code_page_allocator->AllocatePages(
+      hint, allocate_code_size, kAllocatePageSize, PageAllocator::kNoAccess);
+
+  if (!embedded_blob_copy) {
+    V8::FatalProcessOutOfMemory(
+        isolate(), "Can't allocate space for re-embedded builtins");
+  }
+
+  size_t code_size =
+      RoundUp(embedded_blob_code_size, code_page_allocator->CommitPageSize());
+
+  if (!code_page_allocator->SetPermissions(embedded_blob_copy, code_size,
+                                           PageAllocator::kReadWrite)) {
+    V8::FatalProcessOutOfMemory(isolate(),
+                                "Re-embedded builtins: set permissions");
+  }
+  memcpy(embedded_blob_copy, embedded_blob_code, embedded_blob_code_size);
+
+  if (!code_page_allocator->SetPermissions(embedded_blob_copy, code_size,
+                                           PageAllocator::kReadExecute)) {
+    V8::FatalProcessOutOfMemory(isolate(),
+                                "Re-embedded builtins: set permissions");
+  }
+  return reinterpret_cast<uint8_t*>(embedded_blob_copy);
+}
+
 class StressConcurrentAllocationObserver : public AllocationObserver {
  public:
   explicit StressConcurrentAllocationObserver(Heap* heap)
@@ -6493,15 +6546,23 @@ Code Heap::GcSafeCastToCode(HeapObject object, Address inner_pointer) {
 bool Heap::GcSafeCodeContains(Code code, Address addr) {
   Map map = GcSafeMapOfCodeSpaceObject(code);
   DCHECK(map == ReadOnlyRoots(this).code_map());
-  if (InstructionStream::TryLookupCode(isolate(), addr) == code) return true;
+  Builtins::Name maybe_builtin =
+      InstructionStream::TryLookupCode(isolate(), addr);
+  if (Builtins::IsBuiltinId(maybe_builtin) &&
+      code.builtin_index() == maybe_builtin) {
+    return true;
+  }
   Address start = code.address();
   Address end = code.address() + code.SizeFromMap(map);
   return start <= addr && addr < end;
 }
 
 Code Heap::GcSafeFindCodeForInnerPointer(Address inner_pointer) {
-  Code code = InstructionStream::TryLookupCode(isolate(), inner_pointer);
-  if (!code.is_null()) return code;
+  Builtins::Name maybe_builtin =
+      InstructionStream::TryLookupCode(isolate(), inner_pointer);
+  if (Builtins::IsBuiltinId(maybe_builtin)) {
+    return builtin(maybe_builtin);
+  }
 
   if (V8_ENABLE_THIRD_PARTY_HEAP_BOOL) {
     Address start = tp_heap_->GetObjectFromInnerPointer(inner_pointer);

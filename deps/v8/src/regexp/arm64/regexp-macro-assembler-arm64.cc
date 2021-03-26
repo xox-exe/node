@@ -1411,7 +1411,7 @@ void RegExpMacroAssemblerARM64::CallCheckStackGuardState(Register scratch) {
     UseScratchRegisterScope temps(masm_);
     Register scratch = temps.AcquireX();
 
-    EmbeddedData d = EmbeddedData::FromBlob();
+    EmbeddedData d = EmbeddedData::FromBlob(isolate());
     Address entry = d.InstructionStartOfBuiltin(Builtins::kDirectCEntry);
 
     __ Ldr(scratch, Operand(entry, RelocInfo::OFF_HEAP_TARGET));
@@ -1579,6 +1579,8 @@ void RegExpMacroAssemblerARM64::CallIf(Label* to, Condition condition) {
 
 
 void RegExpMacroAssemblerARM64::RestoreLinkRegister() {
+  // TODO(v8:10026): Remove when we stop compacting for code objects that are
+  // active on the call stack.
   __ Pop<TurboAssembler::kAuthLR>(padreg, lr);
   __ Add(lr, lr, Operand(masm_->CodeObject()));
 }

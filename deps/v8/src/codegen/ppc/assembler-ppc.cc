@@ -54,6 +54,8 @@ static unsigned CpuFeaturesImpliedByCompiler() {
   return answer;
 }
 
+bool CpuFeatures::SupportsWasmSimd128() { return false; }
+
 void CpuFeatures::ProbeImpl(bool cross_compile) {
   supported_ |= CpuFeaturesImpliedByCompiler();
   icache_line_size_ = 128;
@@ -1475,7 +1477,8 @@ void Assembler::mcrfs(CRegister cr, FPSCRBit bit) {
 
 void Assembler::mfcr(Register dst) { emit(EXT2 | MFCR | dst.code() * B21); }
 
-void Assembler::mtcrf(unsigned char FXM, Register src) {
+void Assembler::mtcr(Register src) {
+  uint8_t FXM = 0xFF;
   emit(MTCRF | src.code() * B21 | FXM * B12);
 }
 #if V8_TARGET_ARCH_PPC64

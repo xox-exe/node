@@ -32,47 +32,47 @@ enum InstanceType : uint16_t;
   V(FeedbackMetadata)                \
   V(FixedDoubleArray)
 
-#define POINTER_VISITOR_ID_LIST(V) \
-  V(AllocationSite)                \
-  V(BytecodeArray)                 \
-  V(Cell)                          \
-  V(Code)                          \
-  V(CodeDataContainer)             \
-  V(DataHandler)                   \
-  V(EmbedderDataArray)             \
-  V(EphemeronHashTable)            \
-  V(FeedbackCell)                  \
-  V(FreeSpace)                     \
-  V(JSApiObject)                   \
-  V(JSArrayBuffer)                 \
-  V(JSDataView)                    \
-  V(JSFunction)                    \
-  V(JSObject)                      \
-  V(JSObjectFast)                  \
-  V(JSTypedArray)                  \
-  V(JSWeakRef)                     \
-  V(JSWeakCollection)              \
-  V(Map)                           \
-  V(NativeContext)                 \
-  V(PreparseData)                  \
-  V(PropertyArray)                 \
-  V(PropertyCell)                  \
-  V(PrototypeInfo)                 \
-  V(ShortcutCandidate)             \
-  V(SmallOrderedHashMap)           \
-  V(SmallOrderedHashSet)           \
-  V(SmallOrderedNameDictionary)    \
-  V(SourceTextModule)              \
-  V(Struct)                        \
-  V(SwissNameDictionary)           \
-  V(Symbol)                        \
-  V(SyntheticModule)               \
-  V(TransitionArray)               \
-  V(WasmIndirectFunctionTable)     \
-  V(WasmInstanceObject)            \
-  V(WasmArray)                     \
-  V(WasmStruct)                    \
-  V(WasmTypeInfo)                  \
+#define POINTER_VISITOR_ID_LIST(V)      \
+  V(AllocationSite)                     \
+  V(BytecodeArray)                      \
+  V(Cell)                               \
+  V(Code)                               \
+  V(CodeDataContainer)                  \
+  V(DataHandler)                        \
+  V(EmbedderDataArray)                  \
+  V(EphemeronHashTable)                 \
+  V(FeedbackCell)                       \
+  V(FreeSpace)                          \
+  V(JSApiObject)                        \
+  V(JSArrayBuffer)                      \
+  V(JSDataView)                         \
+  V(JSFunction)                         \
+  V(JSObject)                           \
+  V(JSObjectFast)                       \
+  V(JSTypedArray)                       \
+  V(JSWeakRef)                          \
+  V(JSWeakCollection)                   \
+  V(Map)                                \
+  V(NativeContext)                      \
+  V(PreparseData)                       \
+  V(PropertyArray)                      \
+  V(PropertyCell)                       \
+  V(PrototypeInfo)                      \
+  V(ShortcutCandidate)                  \
+  V(SmallOrderedHashMap)                \
+  V(SmallOrderedHashSet)                \
+  V(SmallOrderedNameDictionary)         \
+  V(SourceTextModule)                   \
+  V(Struct)                             \
+  V(SwissNameDictionary)                \
+  V(Symbol)                             \
+  V(SyntheticModule)                    \
+  V(TransitionArray)                    \
+  IF_WASM(V, WasmIndirectFunctionTable) \
+  IF_WASM(V, WasmInstanceObject)        \
+  IF_WASM(V, WasmArray)                 \
+  IF_WASM(V, WasmStruct)                \
+  IF_WASM(V, WasmTypeInfo)              \
   V(WeakCell)
 
 #define TORQUE_VISITOR_ID_LIST(V)     \
@@ -245,6 +245,8 @@ class Map : public HeapObject {
   // Bit field.
   //
   DECL_PRIMITIVE_ACCESSORS(bit_field, byte)
+  // Atomic accessors, used for allowlisting legitimate concurrent accesses.
+  DECL_PRIMITIVE_ACCESSORS(relaxed_bit_field, byte)
 
   // Bit positions for |bit_field|.
   struct Bits1 {
@@ -481,10 +483,6 @@ class Map : public HeapObject {
 
   bool HasOutOfObjectProperties() const;
 
-  // Returns true if transition to the given map requires special
-  // synchronization with the concurrent marker.
-  bool TransitionRequiresSynchronizationWithGC(Map target) const;
-
   // TODO(ishell): candidate with JSObject::MigrateToMap().
   bool InstancesNeedRewriting(Map target) const;
   bool InstancesNeedRewriting(Map target, int target_number_of_fields,
@@ -580,6 +578,7 @@ class Map : public HeapObject {
                              WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
 
   // [instance descriptors]: describes the object.
+  DECL_ACCESSORS(instance_descriptors, DescriptorArray)
   DECL_RELAXED_ACCESSORS(instance_descriptors, DescriptorArray)
   DECL_ACQUIRE_GETTER(instance_descriptors, DescriptorArray)
   V8_EXPORT_PRIVATE void SetInstanceDescriptors(Isolate* isolate,
@@ -941,6 +940,11 @@ class Map : public HeapObject {
       PropertyConstness new_constness, MaybeHandle<FieldType> old_field_type,
       MaybeHandle<Object> old_value, MaybeHandle<FieldType> new_field_type,
       MaybeHandle<Object> new_value);
+
+  // This is the equivalent of IsMap() but avoids reading the instance type so
+  // it can be used concurrently without acquire load.
+  V8_INLINE bool ConcurrentIsMap(IsolateRoot isolate,
+                                 const Object& object) const;
 
   // Use the high-level instance_descriptors/SetInstanceDescriptors instead.
   DECL_RELEASE_SETTER(instance_descriptors, DescriptorArray)
